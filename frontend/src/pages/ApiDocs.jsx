@@ -49,39 +49,21 @@ console.log(data.status, data.score);`;
   "domain": "gmail.com",
   "status": "VALID",
   "score": 95,
+  "confidence": 95,
+  "confidence_level": "HIGH",
+  "verification_method": "Non-delivery technical verification",
+  "notification_sent": false,
   "checks": {
-    "syntax": {
-      "passed": true,
-      "status": "passed",
-      "message": "Email conforms to RFC 5322 syntax standards"
-    },
-    "domain": {
-      "passed": true,
-      "status": "passed",
-      "message": "Domain 'gmail.com' is syntactically valid"
-    },
-    "dns": {
-      "passed": true,
-      "status": "passed",
-      "message": "Domain resolved successfully (1 IP record found)."
-    },
-    "mx": {
-      "passed": true,
-      "status": "passed",
-      "message": "5 MX records detected (Primary: gmail-smtp-in.l.google.com)."
-    },
-    "disposable": {
-      "passed": true,
-      "status": "passed",
-      "message": "Domain is not identified as a temporary/disposable inbox."
-    },
-    "role_based": {
-      "passed": true,
-      "status": "passed",
-      "message": "Address is individual/personal, not a generic role alias."
-    }
+    "syntax": { "passed": true, "status": "PASS", "message": "Email conforms to RFC 5322 syntax standards." },
+    "domain": { "passed": true, "status": "PASS", "message": "Domain 'gmail.com' format is valid." },
+    "dns": { "passed": true, "status": "PASS", "message": "Domain resolved successfully (1 active IP record)." },
+    "mx": { "passed": true, "status": "PASS", "message": "5 MX records configured." },
+    "smtp": { "passed": true, "status": "ACCEPTED", "message": "Mailbox recipient accepted by destination mail server (250 OK)." },
+    "disposable": { "passed": true, "status": "NO", "message": "Domain is not identified as a disposable inbox." },
+    "role_based": { "passed": true, "status": "NO", "message": "Address is individual, not a generic role alias." }
   },
-  "message": "Email passed all available syntax, DNS resolution, and mail server (MX) checks."
+  "message": "Email address passed all technical syntax, DNS, MX, and recipient mailbox non-delivery checks.",
+  "reason": "Mail server accepted recipient address (250 OK) and rejected non-existent probe."
 }`;
 
   return (

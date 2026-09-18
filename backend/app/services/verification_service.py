@@ -1,13 +1,12 @@
 import re
+import time
 import socket
-import smtplib
-import uuid
 import logging
 from typing import Dict, Any, Tuple, List, Optional
 from email_validator import validate_email, EmailNotValidError
 from app.services.dns_service import dns_service
 from app.services.smtp_service import smtp_service
-from app.services.mailbox_challenge_service import mailbox_challenge_service
+from app.services.external_verifier import external_verifier
 from app.data.disposable_domains import is_disposable_domain
 from app.data.role_prefixes import is_role_based_local_part, is_free_email_domain
 from app.schemas.verification import (
@@ -21,15 +20,16 @@ logger = logging.getLogger("mailscope.verification")
 
 class VerificationEngine:
     """
-    Modular Multi-Signal Email Validation and Deliverability Verification Engine.
-    Executes a 12-stage technical inspection pipeline:
-    EMAIL ➔ SYNTAX ➔ DOMAIN ➔ DNS ➔ MX ➔ SMTP CONNECT ➔ RECIPIENT PROBE ➔ CATCH-ALL ➔ DISPOSABLE ➔ ROLE-BASED ➔ FREE-MAIL ➔ CONFIDENCE & CLASSIFICATION
+    MailScope Layered Technical Non-Delivery Email Verification Engine.
+    Executes a 5-step evidence-based inspection pipeline WITHOUT sending emails or OTPs:
+    STEP 1: EMAIL FORMAT / SYNTAX
+    STEP 2: DOMAIN VALIDATION (DNS A/AAAA)
+    STEP 3: MX RECORD CHECK
+    STEP 4: SMTP HANDSHAKE & RCPT TO RECIPIENT PROBE
+    STEP 5: EVIDENCE AGGREGATION & FINAL RESULT CLASSIFICATION
     """
 
     def validateSyntax(self, raw_email: str) -> Dict[str, Any]:
-        """
-        Stage 1: Validates RFC 5322 syntax, local-part format, @ separator, and domain structure.
-        """
         cleaned = (raw_email or "").strip()
         if not cleaned:
             return {
@@ -41,7 +41,6 @@ class VerificationEngine:
                 "message": "Email address cannot be empty.",
             }
 
-        # Check for basic illegal formatting
         if cleaned.count("@") != 1 or ".." in cleaned or cleaned.startswith(".") or cleaned.endswith("."):
             parts = cleaned.split("@")
             return {
@@ -75,17 +74,13 @@ class VerificationEngine:
             }
 
     def checkDomain(self, domain: str) -> Dict[str, Any]:
-        """
-        Stage 2: Checks domain format and basic structure.
-        """
         if not domain or "." not in domain or domain.startswith(".") or domain.endswith(".") or domain.startswith("-") or domain.endswith("-"):
             return {
                 "passed": False,
                 "display_value": "FAIL",
                 "message": f"Domain '{domain}' has an invalid format.",
             }
-        
-        # Check domain label lengths
+
         labels = domain.split(".")
         for label in labels:
             if not label or len(label) > 63:
@@ -102,9 +97,6 @@ class VerificationEngine:
         }
 
     def checkDNS(self, domain: str) -> Dict[str, Any]:
-        """
-        Stage 3: Performs real DNS resolution (A/AAAA records) with timeout handling.
-        """
         if not domain:
             return {
                 "passed": False,
@@ -133,7 +125,7 @@ class VerificationEngine:
                 "is_timeout": False,
                 "a_records": [],
                 "raw": dns_res,
-                "message": dns_res.get("error") or "Domain does not resolve to active DNS records.",
+                "message": dns_res.get("error") or "Domain does not exist or resolve to active DNS records.",
             }
 
         ip_count = len(dns_res.get("a_records", []))
@@ -147,10 +139,6 @@ class VerificationEngine:
         }
 
     def checkMX(self, domain: str, dns_result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Stage 4: Inspects Mail Exchange (MX) records, priority ordering, and routing hosts.
-        Enforces invariant: MX exists ≠ Mailbox exists.
-        """
         raw_dns = dns_result.get("raw", {})
         if dns_result.get("is_timeout"):
             return {
@@ -182,10 +170,6 @@ class VerificationEngine:
         }
 
     def checkSMTP(self, email: str, domain: str, mx_records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Stages 5, 6, 7: Server-side SMTP connectivity, Recipient-level RCPT TO probing, and Catch-All detection.
-        Uses 2.0s safe socket timeout. Does NOT send actual email messages.
-        """
         if not email or not domain or not mx_records:
             return {
                 "attempted": False,
@@ -206,9 +190,6 @@ class VerificationEngine:
         )
 
     def detectDisposable(self, domain: str) -> Dict[str, Any]:
-        """
-        Stage 8: Detects known temporary / disposable inbox providers.
-        """
         is_disp = is_disposable_domain(domain)
         return {
             "is_disposable": is_disp,
@@ -218,9 +199,6 @@ class VerificationEngine:
         }
 
     def detectRoleBased(self, local_part: str) -> Dict[str, Any]:
-        """
-        Stage 9: Detects generic role-based prefixes (e.g. info, support, admin, sales).
-        """
         is_role = is_role_based_local_part(local_part)
         return {
             "is_role_based": is_role,
@@ -230,10 +208,6 @@ class VerificationEngine:
         }
 
     def detectFreeMail(self, domain: str) -> Dict[str, Any]:
-        """
-        Stage 10: Identifies consumer free-mail providers (Gmail, Outlook, Yahoo, etc.).
-        Informational only - NOT penalized in scoring.
-        """
         is_free = is_free_email_domain(domain)
         return {
             "is_free_provider": is_free,
@@ -242,175 +216,180 @@ class VerificationEngine:
             "message": f"Domain is hosted by consumer provider ({domain})." if is_free else "Domain is a custom/corporate business domain.",
         }
 
-    def calculateConfidence(self, signals: Dict[str, Any]) -> int:
+    def determineProviderCapability(self, domain: str, smtp_res: Dict[str, Any]) -> str:
+        if smtp_res.get("is_catch_all"):
+            return "CATCH_ALL"
+        if smtp_res.get("smtp_status") == "ACCEPTED" and smtp_res.get("mailbox_status") == "CONFIRMED":
+            return "MAILBOX_VERIFICATION_SUPPORTED"
+        if smtp_res.get("smtp_status") == "REJECTED" or smtp_res.get("mailbox_status") in ["NOT_FOUND", "REJECTED"]:
+            return "MAILBOX_VERIFICATION_SUPPORTED"
+        if smtp_res.get("smtp_status") in ["BLOCKED", "TIMEOUT"]:
+            return "MAILBOX_VERIFICATION_RESTRICTED"
+        if smtp_res.get("smtp_status") == "GREYLISTED":
+            return "TEMPORARY_GREYLISTING"
+        return "MAILBOX_VERIFICATION_AMBIGUOUS"
+
+    def evaluateResult(self, signals: Dict[str, Any]) -> Tuple[str, str, int, str, str, str, str, str, str, str, str, str, str]:
         """
-        Stage 11: Multi-Signal Deterministic Confidence Calculation Engine.
-        Calculates verification score based strictly on technical evidence (0 to 100).
+        Evaluates signals and returns:
+        (status, final_status, score, confidence_level, reason, message,
+         email_format, domain_status, mx_status, smtp_connection_status, recipient_status,
+         mailbox_evidence, verification_capability, mailbox_existence)
         """
-        # Hard fatal failure checks -> 0
-        if not signals["syntax"]["passed"] or not signals["domain"]["passed"]:
-            return 0
-        if not signals["dns"]["passed"] and not signals["dns"].get("is_timeout"):
-            return 0
-        if not signals["mx"]["passed"] and not signals["mx"].get("is_timeout"):
-            return 0
-        if signals["smtp"]["smtp_status"] == "REJECTED" or signals["smtp"]["mailbox_status"] in ["NOT_FOUND", "REJECTED"]:
-            return 0
+        syntax = signals["syntax"]
+        domain = signals["domain"]
+        dns = signals["dns"]
+        mx = signals["mx"]
+        smtp = signals["smtp"]
+        disposable = signals["disposable"]
+        role_based = signals["role_based"]
+        dom_name = signals.get("domain_name", "")
 
-        # Mailbox Verified via One-Time Confirmation Code -> 100
-        if signals.get("is_otp_verified"):
-            return 100
+        capability = self.determineProviderCapability(dom_name, smtp)
 
-        # Mailbox Positively Confirmed by Destination Mail Server (250 OK) -> 100
-        if signals["smtp"]["smtp_status"] == "ACCEPTED" and signals["smtp"]["mailbox_status"] == "CONFIRMED":
-            return 100
-
-        # Deterministic weighted signal aggregation
-        score = 0
-
-        # 1. Syntax Pass (+20)
-        if signals["syntax"]["passed"]:
-            score += 20
-
-        # 2. Domain Format Pass (+15)
-        if signals["domain"]["passed"]:
-            score += 15
-
-        # 3. DNS Resolution Pass (+15)
-        if signals["dns"]["passed"]:
-            score += 15
-        elif signals["dns"].get("is_timeout"):
-            score += 5
-
-        # 4. MX Record Configuration Pass (+20)
-        if signals["mx"]["passed"]:
-            score += 20
-        elif signals["mx"].get("is_timeout"):
-            score += 5
-
-        # 5. SMTP Server Connectivity (+10)
-        if signals["smtp"]["connected"]:
-            score += 10
-        elif signals["smtp"]["smtp_status"] in ["BLOCKED", "TIMEOUT", "GREYLISTED"]:
-            score += 5 # Infrastructure exists, network filtered
-
-        # 6. Risk Penalties
-        if signals["disposable"]["is_disposable"]:
-            score -= 20
-        if signals["role_based"]["is_role_based"]:
-            score -= 10
-        if signals["smtp"].get("is_catch_all"):
-            score -= 10
-
-        # Clamp strictly between 0 and 100
-        return max(0, min(100, score))
-
-    def classifyResult(self, signals: Dict[str, Any], confidence: int) -> Tuple[str, str, str]:
-        """
-        Stage 12: Final Result Classification Engine.
-        Classifies strictly into VALID, INVALID, RISKY, or UNKNOWN with comprehensive rationale.
-        """
-        # --- 1. INVALID: Clear Negative Evidence ---
-        if not signals["syntax"]["passed"]:
+        # 1. Syntax Fail
+        if not syntax["passed"]:
             return (
-                "INVALID",
-                "Email address syntax is invalid.",
-                signals["syntax"]["message"]
+                "INVALID", "NOT REAL / INVALID", 0, "HIGH",
+                "Email address syntax is invalid.", syntax["message"],
+                "INVALID", "INVALID", "UNKNOWN", "SKIPPED", "REJECTED",
+                "CONFIRMED_REJECTED", capability, "REJECTED"
             )
 
-        if not signals["domain"]["passed"]:
+        # 2. Domain Format Fail
+        if not domain["passed"]:
             return (
-                "INVALID",
-                "Email address has an invalid domain format.",
-                signals["domain"]["message"]
+                "INVALID", "NOT REAL / INVALID", 0, "HIGH",
+                "Email address has an invalid domain format.", domain["message"],
+                "VALID", "INVALID", "UNKNOWN", "SKIPPED", "REJECTED",
+                "CONFIRMED_REJECTED", capability, "REJECTED"
             )
 
-        if not signals["dns"]["passed"]:
-            if signals["dns"].get("is_timeout"):
+        # 3. DNS Resolution Fail / Timeout
+        if not dns["passed"]:
+            if dns.get("is_timeout"):
                 return (
-                    "UNKNOWN",
-                    "DNS lookup timed out. Nameserver delay prevents conclusive verification.",
-                    "Temporary DNS query timeout. Verification is inconclusive."
+                    "UNKNOWN", "UNKNOWN", 40, "MEDIUM",
+                    "DNS lookup timed out during nameserver resolution.",
+                    "DNS query timed out. Mailbox existence cannot be determined without nameserver resolution.",
+                    "VALID", "UNKNOWN", "UNKNOWN", "SKIPPED", "UNCONFIRMED",
+                    "NO_EVIDENCE", capability, "NOT CONFIRMED"
                 )
             return (
-                "INVALID",
-                "Domain does not exist or does not resolve to active DNS records.",
-                signals["dns"]["message"]
+                "INVALID", "NOT REAL / INVALID", 0, "HIGH",
+                "The email domain does not exist (NXDOMAIN).", dns["message"],
+                "VALID", "INVALID", "MISSING", "SKIPPED", "REJECTED",
+                "CONFIRMED_REJECTED", capability, "REJECTED"
             )
 
-        if not signals["mx"]["passed"]:
-            if signals["mx"].get("is_timeout"):
+        # 4. MX Record Fail / Timeout
+        if not mx["passed"]:
+            if mx.get("is_timeout"):
                 return (
-                    "UNKNOWN",
-                    "MX lookup timed out. Mail routing could not be verified.",
-                    "Temporary MX query timeout. Verification is inconclusive."
+                    "UNKNOWN", "UNKNOWN", 45, "MEDIUM",
+                    "MX lookup timed out while checking mail server configuration.",
+                    "MX DNS query timed out. Mail server configuration could not be verified.",
+                    "VALID", "VALID", "UNKNOWN", "SKIPPED", "UNCONFIRMED",
+                    "NO_EVIDENCE", capability, "NOT CONFIRMED"
                 )
             return (
-                "INVALID",
-                "No usable mail exchange (MX) servers configured for this domain.",
-                signals["mx"]["message"]
+                "INVALID", "NOT REAL / INVALID", 0, "HIGH",
+                "No mail exchange (MX) servers configured for this domain.", mx["message"],
+                "VALID", "VALID", "MISSING", "SKIPPED", "REJECTED",
+                "CONFIRMED_REJECTED", capability, "REJECTED"
             )
 
-        if signals["smtp"]["smtp_status"] == "REJECTED" or signals["smtp"]["mailbox_status"] in ["NOT_FOUND", "REJECTED"]:
+        # 5. Explicit SMTP Recipient Rejection (550 User Unknown / 551 / 553)
+        if smtp["smtp_status"] == "REJECTED" or smtp["mailbox_status"] in ["NOT_FOUND", "REJECTED"]:
+            server_msg = smtp.get("server_message") or "Destination mail server rejected target recipient address."
             return (
-                "INVALID",
-                "Destination mail server rejected the recipient mailbox (User unknown / 550).",
-                signals["smtp"]["server_message"] or "Mailbox does not exist on destination server."
+                "INVALID", "NOT REAL / INVALID", 0, "HIGH",
+                f"The email format is valid, but the receiving SMTP server explicitly rejected recipient: {server_msg}",
+                server_msg,
+                "VALID", "VALID", "FOUND", "CONNECTED" if smtp.get("connected") else "BLOCKED", "REJECTED",
+                "CONFIRMED_REJECTED", capability, "REJECTED"
             )
 
-        # --- 2. RISKY: Risk Signals Detected ---
-        if signals["disposable"]["is_disposable"]:
+        # 6. Risk Signal 1: Disposable Domain
+        if disposable["is_disposable"]:
             return (
-                "RISKY",
+                "RISKY", "RISKY", 30, "HIGH",
                 "Domain matches a known disposable temporary email provider.",
-                "Email address appears technically functional but is hosted by a disposable inbox provider."
+                "Email address syntax and domain are valid, but it belongs to a temporary/disposable inbox provider.",
+                "VALID", "VALID", "FOUND", "CONNECTED" if smtp.get("connected") else "BLOCKED", "UNCONFIRMED",
+                "ACCEPTED_NOT_CONFIRMED", capability, "NOT CONFIRMED"
             )
 
-        if signals["role_based"]["is_role_based"]:
+        # 7. Risk Signal 2: Catch-All Domain
+        if smtp.get("is_catch_all"):
             return (
-                "RISKY",
-                "Address appears to be role-based (department/group alias).",
-                "Email address is a role-based mailbox (e.g. support, admin, info), which carries higher bounce/unattended risks."
+                "RISKY", "RISKY", 60, "MEDIUM",
+                "The receiving mail server accepts arbitrary recipients (Catch-All), so the existence of this specific mailbox cannot be independently confirmed.",
+                "Destination mail server operates Catch-All mail routing and accepts any recipient prefix. Specific mailbox existence cannot be guaranteed.",
+                "VALID", "VALID", "FOUND", "CONNECTED", "CATCH_ALL",
+                "CATCH_ALL", "CATCH_ALL", "NOT CONFIRMED"
             )
 
-        if signals["smtp"].get("is_catch_all"):
+        # 8. Risk Signal 3: Role-Based Alias
+        if role_based["is_role_based"]:
             return (
-                "RISKY",
-                "Destination domain operates a Catch-All policy, accepting arbitrary recipient prefixes.",
-                "Domain accepts all incoming mailboxes, making specific recipient verification inconclusive."
+                "RISKY", "RISKY", 65, "MEDIUM",
+                "Address is role-based (department alias e.g. info, support, admin).",
+                "Email address appears technically functional but is a department/role alias rather than a personal mailbox.",
+                "VALID", "VALID", "FOUND", "CONNECTED" if smtp.get("connected") else "BLOCKED", "UNCONFIRMED",
+                "ACCEPTED_NOT_CONFIRMED", capability, "NOT CONFIRMED"
             )
 
-        # --- 3. VALID: Strong Positive Technical Evidence ---
-        if signals.get("is_otp_verified"):
+        # 9. SMTP Accepted Recipient & Confirmed Non-Catch-All (REAL / VALID)
+        if smtp["smtp_status"] == "ACCEPTED" and smtp["mailbox_status"] == "CONFIRMED":
+            server_msg = smtp.get("server_message") or "Mailbox recipient accepted by server (250 OK)."
             return (
-                "VALID",
-                "Mailbox ownership and accessibility verified via one-time confirmation code.",
-                "✓ Mailbox verified. Verification code confirmed."
+                "VALID", "REAL / VALID", 95, "HIGH",
+                f"SMTP recipient-level verification confirmed recipient existence: {server_msg}",
+                "Email address passed all technical syntax, DNS, MX, and recipient mailbox non-delivery checks.",
+                "VALID", "VALID", "FOUND", "CONNECTED", "ACCEPTED",
+                "CONFIRMED_EXISTS", "MAILBOX_VERIFICATION_SUPPORTED", "CONFIRMED"
             )
 
-        if signals["smtp"]["smtp_status"] == "ACCEPTED" and signals["smtp"]["mailbox_status"] == "CONFIRMED":
-            return (
-                "VALID",
-                "Mailbox existence confirmed by destination mail server (250 OK).",
-                "Email passed all technical, domain, and server recipient mailbox verification checks."
-            )
+        # 10. SMTP Restriction / Greylisting / Timeout / Inconclusive (UNKNOWN)
+        smtp_status = smtp.get("smtp_status", "UNKNOWN")
+        smtp_conn_str = "CONNECTED" if smtp.get("connected") else ("TIMEOUT" if smtp_status == "TIMEOUT" else "BLOCKED")
+        server_msg = smtp.get("server_message") or ""
 
-        # --- 4. UNKNOWN: Insufficient / Blocked / Indeterminate Evidence ---
-        # When domain/MX are active, but SMTP handshake was restricted by ISP/firewall and OTP is unverified
+        if smtp_status == "GREYLISTED":
+            reason = f"Destination mail server returned temporary greylisting/rate-limit response: {server_msg}"
+            msg = "Mail server responded with a temporary 4xx code. Try again later."
+            evidence = "AMBIGUOUS"
+        elif smtp_status == "TIMEOUT":
+            reason = f"Outbound SMTP connection timed out: {server_msg}"
+            msg = "Connection to mail server timed out on Port 25. Mailbox existence is unconfirmed."
+            evidence = "TIMEOUT"
+        elif smtp_status == "BLOCKED":
+            reason = f"Outbound SMTP connection error or network restriction: {server_msg}"
+            msg = "Port 25 outbound network connection was blocked or restricted."
+            evidence = "PROVIDER_BLOCKED"
+        else:
+            reason = f"Ambiguous SMTP response: {server_msg}" if server_msg else "Receiving mail server did not disclose recipient mailbox status."
+            msg = "The receiving mail server did not provide explicit mailbox confirmation."
+            evidence = "NO_EVIDENCE"
+
         return (
-            "UNKNOWN",
-            "Mailbox existence unconfirmed (SMTP restricted). Mailbox verification required to confirm access.",
-            "Domain and mail server infrastructure are active. Send a verification code to confirm mailbox access."
+            "UNKNOWN", "UNKNOWN", 50, "LOW",
+            reason, msg,
+            "VALID", "VALID", "FOUND", smtp_conn_str, "UNCONFIRMED",
+            evidence, capability, "NOT CONFIRMED"
         )
 
     def verify_email(self, email: str) -> VerifyResponse:
-        """
-        Executes the complete multi-signal verification pipeline and returns standard VerifyResponse.
-        """
+        t_start = time.perf_counter()
         raw_email = (email or "").strip()
 
         # 1. Syntax Validation
+        t_syn_0 = time.perf_counter()
         syntax_res = self.validateSyntax(raw_email)
+        t_syn_1 = time.perf_counter()
+        syntax_time_ms = round((t_syn_1 - t_syn_0) * 1000, 2)
+
         normalized_email = syntax_res["normalized_email"]
         local_part = syntax_res["local_part"]
         domain = syntax_res["domain"]
@@ -423,6 +402,7 @@ class VerificationEngine:
         }
 
         # 3. DNS Resolution
+        t_dns_0 = time.perf_counter()
         dns_res = self.checkDNS(domain) if domain_res["passed"] else {
             "passed": False,
             "display_value": "FAIL",
@@ -439,6 +419,8 @@ class VerificationEngine:
             "mx_records": [],
             "message": "MX check skipped (domain unresolvable).",
         }
+        t_dns_1 = time.perf_counter()
+        dns_time_ms = round((t_dns_1 - t_dns_0) * 1000, 2) if domain_res["passed"] else 0.0
 
         # 5. Disposable Detection
         disp_res = self.detectDisposable(domain) if domain else {
@@ -464,7 +446,8 @@ class VerificationEngine:
             "message": "Free-mail check skipped.",
         }
 
-        # 8. Server-Side SMTP Probing
+        # 8. Server-Side SMTP Non-Delivery Probing
+        t_smtp_0 = time.perf_counter()
         smtp_res = self.checkSMTP(
             email=normalized_email,
             domain=domain,
@@ -480,13 +463,22 @@ class VerificationEngine:
             "mx_host_used": None,
             "details": {},
         }
+        t_smtp_1 = time.perf_counter()
+        smtp_time_ms = round((t_smtp_1 - t_smtp_0) * 1000, 2) if mx_res["passed"] else 0.0
 
-        # 9. Mailbox OTP Verified State
-        is_otp_verified = mailbox_challenge_service.is_mailbox_verified(normalized_email)
-        if is_otp_verified:
-            smtp_res["mailbox_status"] = "CONFIRMED"
+        # Optional External Verification Provider Adapter
+        ext_res = external_verifier.verify_email_external(normalized_email)
+        if ext_res and ext_res.get("is_valid") is not None:
+            if ext_res["is_valid"]:
+                smtp_res["smtp_status"] = "ACCEPTED"
+                smtp_res["mailbox_status"] = "CONFIRMED"
+                smtp_res["server_message"] = "Mailbox verified via authorized verification adapter."
+            else:
+                smtp_res["smtp_status"] = "REJECTED"
+                smtp_res["mailbox_status"] = "NOT_FOUND"
+                smtp_res["server_message"] = "Mailbox rejected via authorized verification adapter."
 
-        # Signal Aggregation
+        # Aggregate Signals
         signals = {
             "syntax": syntax_res,
             "domain": domain_res,
@@ -496,14 +488,26 @@ class VerificationEngine:
             "disposable": disp_res,
             "role_based": role_res,
             "free_mail": free_res,
-            "is_otp_verified": is_otp_verified,
+            "domain_name": domain,
         }
 
-        # 10. Multi-Signal Deterministic Confidence Calculation
-        confidence = self.calculateConfidence(signals)
+        # Evaluate Technical Results
+        (
+            status, final_status, score, confidence_level, reason, message,
+            email_format, domain_status, mx_status, smtp_conn_status, recipient_status,
+            mb_evidence, cap_status, mb_existence
+        ) = self.evaluateResult(signals)
 
-        # 11. Final Classification
-        status, reason, message = self.classifyResult(signals, confidence)
+        # Risk Signals List
+        risk_signals = []
+        if disp_res["is_disposable"]:
+            risk_signals.append("DISPOSABLE_TEMPORARY_DOMAIN")
+        if smtp_res.get("is_catch_all"):
+            risk_signals.append("CATCH_ALL_MAIL_ROUTING")
+        if role_res["is_role_based"]:
+            risk_signals.append("ROLE_BASED_ALIAS")
+
+        primary_mx = mx_res.get("mx_records", [{}])[0].get("host") if mx_res.get("mx_records") else None
 
         # Normalize display values for UI
         smtp_display_map = {
@@ -524,7 +528,7 @@ class VerificationEngine:
             "CATCH_ALL": "UNCONFIRMED",
             "UNCONFIRMED": "UNCONFIRMED"
         }
-        mailbox_display_val = "CONFIRMED" if is_otp_verified else mailbox_display_map.get(smtp_res.get("mailbox_status"), "UNCONFIRMED")
+        mailbox_display_val = mailbox_display_map.get(smtp_res.get("mailbox_status"), "UNCONFIRMED")
 
         checks = VerificationChecks(
             syntax=CheckDetail(
@@ -563,17 +567,16 @@ class VerificationEngine:
                 details=smtp_res
             ),
             mailbox=CheckDetail(
-                passed=mailbox_display_val == "CONFIRMED",
+                passed=mb_existence == "CONFIRMED",
                 status=mailbox_display_val,
                 display_value=mailbox_display_val,
-                message="✓ Mailbox verified. Verification code confirmed." if is_otp_verified else (
-                    "Mailbox existence confirmed by destination mail server (250 OK)." if smtp_res.get("mailbox_status") == "CONFIRMED" else (
-                        "Mailbox rejected by destination mail server." if smtp_res.get("mailbox_status") in ["NOT_FOUND", "REJECTED"] else
-                        "Mailbox unconfirmed. Send a verification code to confirm access." if status == "UNKNOWN" else
-                        f"Mailbox status: {mailbox_display_val}"
+                message=(
+                    "Mailbox existence confirmed by destination mail server (250 OK)." if mb_existence == "CONFIRMED" else (
+                        "Mailbox rejected by destination mail server (550)." if mb_existence == "REJECTED" else
+                        "Mailbox existence could not be confirmed via SMTP probing."
                     )
                 ),
-                details={"status": mailbox_display_val, "is_catch_all": smtp_res.get("is_catch_all", False), "is_otp_verified": is_otp_verified}
+                details={"status": mb_existence, "is_catch_all": smtp_res.get("is_catch_all", False)}
             ),
             disposable=CheckDetail(
                 passed=disp_res["passed"],
@@ -619,13 +622,72 @@ class VerificationEngine:
             mailbox_status=mailbox_display_val,
         )
 
+        # Map classification string
+        classification_map = {
+            "VALID": "REAL",
+            "INVALID": "INVALID",
+            "RISKY": "RISKY",
+            "UNKNOWN": "UNKNOWN"
+        }
+        classification = classification_map.get(status, "UNKNOWN")
+
+        # Prepare structured SMTP summary
+        smtp_trace_dict = smtp_res.get("smtp_trace") or {}
+        smtp_summary = {
+            "attempted": smtp_res.get("attempted", False),
+            "connected": smtp_res.get("connected", False),
+            "mx_host": smtp_res.get("mx_host_used") or primary_mx,
+            "ehlo": smtp_trace_dict.get("ehlo"),
+            "mail_from": smtp_trace_dict.get("mail_from"),
+            "rcpt_to": smtp_trace_dict.get("rcpt_to"),
+            "data_sent": False
+        }
+
+        total_time_ms = round((time.perf_counter() - t_start) * 1000, 2)
+        perf_metrics = {
+            "syntax_time_ms": syntax_time_ms,
+            "dns_time_ms": dns_time_ms,
+            "smtp_time_ms": smtp_time_ms,
+            "total_time_ms": total_time_ms
+        }
+
+        display_final_status = "REAL / REACHABLE" if status == "VALID" else final_status
+
         return VerifyResponse(
             email=raw_email,
             normalized_email=normalized_email,
             domain=domain,
             status=status,
-            score=confidence,
-            confidence=confidence,
+            final_status=display_final_status,
+            classification=classification,
+            score=score,
+            confidence=score,
+            confidence_level=confidence_level,
+            verification_method="NON_CONTACT_SMTP",
+            notification_sent=False,
+            data_sent=False,
+            performance_metrics=perf_metrics,
+            email_format=email_format,
+            domain_status=domain_status,
+            mx_status=mx_status,
+            smtp_connection_status=smtp_conn_status,
+            recipient_status=recipient_status,
+            syntax_valid=syntax_res["passed"],
+            domain_exists=domain_res["passed"],
+            dns_resolved=dns_res["passed"],
+            mx_found=mx_res["passed"],
+            mx_host=primary_mx,
+            smtp_connection=smtp_res.get("connected", False),
+            smtp_recipient_response=smtp_res.get("server_message"),
+            mailbox_evidence=mb_evidence,
+            verification_capability=cap_status,
+            mailbox_existence=mb_existence,
+            catch_all_detected=smtp_res.get("is_catch_all", False),
+            disposable_detected=disp_res["is_disposable"],
+            role_account_detected=role_res["is_role_based"],
+            risk_signals=risk_signals,
+            smtp=smtp_summary,
+            smtp_trace=smtp_res.get("smtp_trace"),
             checks=checks,
             domain_intelligence=domain_intel,
             message=message,

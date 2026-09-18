@@ -34,25 +34,26 @@ class Settings:
     # History tracking toggle
     ENABLE_HISTORY_LOGGING: bool = os.getenv("ENABLE_HISTORY_LOGGING", "true").lower() in ("true", "1", "yes")
     
-    # DNS configuration
+    # DNS configuration & Caching
     DNS_TIMEOUT_SECONDS: float = float(os.getenv("DNS_TIMEOUT_SECONDS", "3.0"))
     DNS_LIFETIME_SECONDS: float = float(os.getenv("DNS_LIFETIME_SECONDS", "5.0"))
+    DNS_CACHE_TTL_SECONDS: int = int(os.getenv("DNS_CACHE_TTL_SECONDS", "300"))
     
-    # Batch verification limit
-    MAX_BATCH_SIZE: int = int(os.getenv("MAX_BATCH_SIZE", "50"))
+    # Batch verification & Document Upload limits
+    MAX_BATCH_SIZE: int = int(os.getenv("MAX_BATCH_SIZE", "100"))
+    MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
+    MAX_BULK_EMAILS: int = int(os.getenv("MAX_BULK_EMAILS", "100"))
+    BULK_CONCURRENCY: int = int(os.getenv("BULK_CONCURRENCY", "3"))
     
-    # Mailbox Verification / OTP Configuration
-    OTP_EXPIRATION_SECONDS: int = int(os.getenv("OTP_EXPIRATION_SECONDS", "600"))  # 10 minutes
-    OTP_MAX_ATTEMPTS: int = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
-    OTP_RESEND_COOLDOWN_SECONDS: int = int(os.getenv("OTP_RESEND_COOLDOWN_SECONDS", "60")) # 60 seconds
-    
-    # Outbound SMTP Delivery Configuration (for sending real confirmation emails)
-    SMTP_HOST: str = os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER") or ""
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT") or "587")
-    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME") or os.getenv("SMTP_USER") or ""
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD") or os.getenv("SMTP_PASS") or ""
-    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL") or os.getenv("SMTP_FROM") or os.getenv("SMTP_SENDER") or os.getenv("SMTP_USERNAME") or "noreply@openmail.verify"
-    SMTP_USE_TLS: bool = str(os.getenv("SMTP_USE_TLS", os.getenv("SMTP_STARTTLS", "true"))).lower() in ("true", "1", "yes")
-    SMTP_USE_SSL: bool = str(os.getenv("SMTP_USE_SSL", "false")).lower() in ("true", "1", "yes")
+    # Technical SMTP Probe configuration (Non-delivery verification)
+    SMTP_TIMEOUT_SECONDS: float = float(os.getenv("SMTP_TIMEOUT_SECONDS", "3.0"))
+    SMTP_HELO_DOMAIN: str = os.getenv("SMTP_HELO_DOMAIN", "mailscope.io")
+    VERIFIER_MAIL_FROM: str = os.getenv("VERIFIER_MAIL_FROM", "verify@mailscope.io")
+    DEV_MODE_SIMULATE_SMTP: bool = False
+
+    # Optional External Verification Provider Adapter
+    EXTERNAL_VERIFIER_ENABLED: bool = os.getenv("EXTERNAL_VERIFIER_ENABLED", "false").lower() in ("true", "1", "yes")
+    EXTERNAL_VERIFIER_URL: str = os.getenv("EXTERNAL_VERIFIER_URL", "")
+    EXTERNAL_VERIFIER_API_KEY: str = os.getenv("EXTERNAL_VERIFIER_API_KEY", "")
 
 settings = Settings()

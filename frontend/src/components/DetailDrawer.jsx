@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, CheckCircle2, XCircle, AlertTriangle, HelpCircle, Shield, Server, Globe, Mail } from 'lucide-react';
+import { X, CheckCircle2, XCircle, AlertTriangle, HelpCircle, Shield, Server, Globe, Lock } from 'lucide-react';
 
 export default function DetailDrawer({ item, isOpen, onClose }) {
   if (!isOpen || !item) return null;
@@ -7,13 +7,13 @@ export default function DetailDrawer({ item, isOpen, onClose }) {
   const getStatusBadge = (status) => {
     switch (status) {
       case 'VALID':
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full badge-valid"><span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>VALID</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full badge-valid"><span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>REAL / VALID</span>;
       case 'RISKY':
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full badge-risky"><span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>RISKY</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full badge-risky"><span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>RISKY</span>;
       case 'INVALID':
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full badge-invalid"><span className="w-1.5 h-1.5 rounded-full bg-red-600"></span>INVALID</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full badge-invalid"><span className="w-1.5 h-1.5 rounded-full bg-red-600"></span>NOT REAL / INVALID</span>;
       default:
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full badge-unknown"><span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>UNKNOWN</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full badge-unknown"><span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>UNKNOWN</span>;
     }
   };
 
@@ -54,6 +54,8 @@ export default function DetailDrawer({ item, isOpen, onClose }) {
                 <span className="font-mono text-xl font-bold text-navy-900">{item.score}<span className="text-xs font-normal text-slate-400">/100</span></span>
               </div>
             </div>
+
+
 
             {/* Section: Identity */}
             <div>
@@ -101,7 +103,7 @@ export default function DetailDrawer({ item, isOpen, onClose }) {
                 <div className="p-3 flex justify-between items-center">
                   <span className="text-slate-600">Server-Side SMTP Probing</span>
                   <span className="text-xs font-medium text-navy-900">
-                    Handshake Analyzed
+                    Non-Delivery Handshake Analyzed
                   </span>
                 </div>
               </div>

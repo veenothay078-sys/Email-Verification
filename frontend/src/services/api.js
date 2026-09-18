@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api/v1',
-  timeout: 15000,
+  timeout: 45000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -13,7 +13,7 @@ const getErrorMessage = (err) => {
     return err.response.data.detail;
   }
   if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-    return 'Verification request timed out. The mail server took too long to respond.';
+    return 'Verification request timed out. Mailbox status categorized as UNKNOWN.';
   }
   if (err.message === 'Network Error' || !err.response) {
     return 'Verification service is temporarily unavailable. Please verify the backend server is running.';
@@ -39,6 +39,50 @@ export const verificationApi = {
       return { data: response.data, error: null };
     } catch (err) {
       return { data: null, error: getErrorMessage(err) };
+    }
+  },
+
+  // Extract emails from PDF / Word document
+  extractEmailsFromDocument: async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await api.post('/extract-document', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return { data: response.data, error: null };
+    } catch (err) {
+      return { data: null, error: getErrorMessage(err) };
+    }
+  },
+
+  // Export batch verification results (csv, xlsx, pdf)
+  exportBatchResults: async (results, format = 'csv') => {
+    try {
+      const response = await api.post(`/export/batch?format=${format}`, results, {
+        responseType: 'blob',
+      });
+      
+      const mimeTypes = {
+        csv: 'text/csv',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        pdf: 'application/pdf'
+      };
+      
+      const blob = new Blob([response.data], { type: mimeTypes[format] || 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `mailscope_batch_audit.${format}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return { success: true, error: null };
+    } catch (err) {
+      return { success: false, error: getErrorMessage(err) };
     }
   },
 
@@ -85,24 +129,4 @@ export const verificationApi = {
       return { data: null, error: getErrorMessage(err) };
     }
   },
-
-  // Send Mailbox One-Time Verification Code
-  sendMailboxCode: async (email) => {
-    try {
-      const response = await api.post('/mailbox/send-code', { email });
-      return { data: response.data, error: null };
-    } catch (err) {
-      return { data: null, error: getErrorMessage(err) };
-    }
-  },
-
-  // Verify Mailbox One-Time Code
-  verifyMailboxCode: async (email, code) => {
-    try {
-      const response = await api.post('/mailbox/verify-code', { email, code });
-      return { data: response.data, error: null };
-    } catch (err) {
-      return { data: null, error: getErrorMessage(err) };
-    }
-  }
 };

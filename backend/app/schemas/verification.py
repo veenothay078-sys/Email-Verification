@@ -40,13 +40,66 @@ class VerificationChecks(BaseModel):
     free_provider: CheckDetail
     catch_all: Optional[CheckDetail] = None
 
+class SMTPStageDetails(BaseModel):
+    status_code: Optional[int] = None
+    code: Optional[int] = None
+    response: Optional[str] = None
+
+class SMTPTrace(BaseModel):
+    attempted: bool = False
+    connected: bool = False
+    hostname: Optional[str] = None
+    mx_host: Optional[str] = None
+    port: int = 25
+    stage: str = "SKIPPED" # CONNECT, GREETING, EHLO, MAIL_FROM, RCPT_TO, CATCH_ALL, SKIPPED, ERROR
+    greeting: Optional[SMTPStageDetails] = None
+    ehlo: Optional[SMTPStageDetails] = None
+    mail_from: Optional[SMTPStageDetails] = None
+    rcpt_to: Optional[SMTPStageDetails] = None
+    data_sent: bool = False
+    catch_all_probe: Optional[Dict[str, Any]] = None
+    attempted_servers: List[Dict[str, Any]] = []
+
 class VerifyResponse(BaseModel):
     email: str
     normalized_email: str
     domain: str
     status: str # "VALID", "INVALID", "RISKY", "UNKNOWN"
+    final_status: str # "REAL / REACHABLE", "NOT REAL / INVALID", "RISKY", "UNKNOWN"
+    classification: str = "UNKNOWN" # "REAL", "INVALID", "UNKNOWN", "RISKY"
     score: int # 0 to 100
     confidence: int # 0 to 100
+    confidence_level: str = "HIGH" # "HIGH", "MEDIUM", "LOW"
+    verification_method: str = "NON_CONTACT_SMTP"
+    notification_sent: bool = False
+    data_sent: bool = False
+    
+    # Explicit 5-Step Evidence Fields
+    email_format: str = "VALID" # VALID or INVALID
+    domain_status: str = "VALID" # VALID, INVALID, UNKNOWN
+    mx_status: str = "FOUND" # FOUND, MISSING, UNKNOWN
+    smtp_connection_status: str = "CONNECTED" # CONNECTED, BLOCKED, TIMEOUT, SKIPPED
+    recipient_status: str = "UNCONFIRMED" # ACCEPTED, REJECTED, UNCONFIRMED, CATCH_ALL
+
+    # Internal Evidence & Capability Fields
+    syntax_valid: bool = True
+    domain_exists: bool = True
+    dns_resolved: bool = True
+    mx_found: bool = True
+    mx_host: Optional[str] = None
+    smtp_connection: bool = False
+    smtp_recipient_response: Optional[str] = None
+    mailbox_evidence: str = "NO_EVIDENCE" # CONFIRMED_EXISTS, CONFIRMED_REJECTED, ACCEPTED_NOT_CONFIRMED, PROVIDER_BLOCKED, CATCH_ALL, TIMEOUT, AMBIGUOUS, NO_EVIDENCE
+    verification_capability: str = "UNKNOWN" # MAILBOX_VERIFICATION_SUPPORTED, MAILBOX_VERIFICATION_BLOCKED, MAILBOX_VERIFICATION_AMBIGUOUS, CATCH_ALL, UNKNOWN
+    mailbox_existence: str = "NOT CONFIRMED" # CONFIRMED, REJECTED, NOT CONFIRMED
+    catch_all_detected: bool = False
+    disposable_detected: bool = False
+    role_account_detected: bool = False
+    risk_signals: List[str] = []
+
+    performance_metrics: Optional[Dict[str, float]] = None
+    smtp: Optional[Dict[str, Any]] = None
+    smtp_trace: Optional[Dict[str, Any]] = None
     checks: VerificationChecks
     domain_intelligence: Optional[DomainIntelligence] = None
     message: str
@@ -60,6 +113,9 @@ class BatchVerifyResponse(BaseModel):
     risky_count: int
     unknown_count: int
     average_score: float
+    total_batch_time_ms: Optional[float] = None
+    average_verification_time_ms: Optional[float] = None
+    emails_per_second: Optional[float] = None
     results: List[VerifyResponse]
 
 class HistoryItem(BaseModel):
@@ -94,23 +150,3 @@ class StatsSummary(BaseModel):
     valid_rate: float
     average_score: float
     recent_activity: List[Dict[str, Any]] = []
-
-class SendMailboxCodeRequest(BaseModel):
-    email: str = Field(..., description="Email address to send the verification code to")
-
-class SendMailboxCodeResponse(BaseModel):
-    success: bool
-    message: str
-    expires_in_seconds: int = 600
-    cooldown_seconds: int = 60
-    delivery_mode: str = "dev_simulated"
-
-class VerifyMailboxCodeRequest(BaseModel):
-    email: str = Field(..., description="Target email address")
-    code: str = Field(..., description="6-digit verification code entered by the user", min_length=6, max_length=6)
-
-class VerifyMailboxCodeResponse(BaseModel):
-    success: bool
-    message: str
-    verification_result: Optional[VerifyResponse] = None
-    attempts_remaining: Optional[int] = None
