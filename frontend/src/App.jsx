@@ -5,7 +5,6 @@ import SingleVerify from './pages/SingleVerify';
 import BatchAudit from './pages/BatchAudit';
 import History from './pages/History';
 import Analytics from './pages/Analytics';
-import ApiDocs from './pages/ApiDocs';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState('overview');
@@ -22,8 +21,6 @@ export default function App() {
         return <History />;
       case 'analytics':
         return <Analytics />;
-      case 'api':
-        return <ApiDocs />;
       default:
         return <Overview onNavigateToVerify={(tab) => setCurrentTab(tab)} />;
     }

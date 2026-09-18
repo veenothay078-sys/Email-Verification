@@ -5,7 +5,6 @@ import {
   Search, 
   History, 
   BarChart3, 
-  Code2, 
   ShieldCheck, 
   ExternalLink,
   Menu,
@@ -36,7 +35,6 @@ export default function Layout({ currentTab, onTabChange, children }) {
     { id: 'batch', label: 'Batch Audit', icon: ShieldCheck, desc: 'PDF / Word bulk upload' },
     { id: 'history', label: 'History', icon: History, desc: 'Verification audit logs' },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, desc: 'Performance & signals' },
-    { id: 'api', label: 'API Reference', icon: Code2, desc: 'REST API documentation' },
   ];
 
   return (
