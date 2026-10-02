@@ -78,20 +78,24 @@ export default function SingleVerify() {
   };
 
   const getStepStatusTag = (val, okValue = 'VALID') => {
-    if (val === okValue || val === 'FOUND' || val === 'CONNECTED' || val === 'ACCEPTED' || val === 'PASS' || val === 'CONFIRMED') {
+    const v = String(val || '').toUpperCase().trim();
+    const ok = String(okValue || '').toUpperCase().trim();
+    if (v === ok || ['FOUND', 'CONNECTED', 'ACCEPTED', 'PASS', 'CONFIRMED', 'VALID', 'YES', 'OK'].includes(v)) {
       return 'text-emerald-700 bg-emerald-50 border-emerald-200';
     }
-    if (val === 'INVALID' || val === 'MISSING' || val === 'REJECTED' || val === 'FAIL') {
+    if (['INVALID', 'MISSING', 'REJECTED', 'FAIL'].includes(v)) {
       return 'text-red-700 bg-red-50 border-red-200';
     }
     return 'text-amber-700 bg-amber-50 border-amber-200';
   };
 
   const getStepIcon = (val, okValue = 'VALID') => {
-    if (val === okValue || val === 'FOUND' || val === 'CONNECTED' || val === 'ACCEPTED' || val === 'PASS' || val === 'CONFIRMED') {
+    const v = String(val || '').toUpperCase().trim();
+    const ok = String(okValue || '').toUpperCase().trim();
+    if (v === ok || ['FOUND', 'CONNECTED', 'ACCEPTED', 'PASS', 'CONFIRMED', 'VALID', 'YES', 'OK'].includes(v)) {
       return <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />;
     }
-    if (val === 'INVALID' || val === 'MISSING' || val === 'REJECTED' || val === 'FAIL') {
+    if (['INVALID', 'MISSING', 'REJECTED', 'FAIL'].includes(v)) {
       return <XCircle className="w-4 h-4 text-red-600 shrink-0" />;
     }
     return <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />;

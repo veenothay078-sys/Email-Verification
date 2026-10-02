@@ -641,8 +641,8 @@ export default function BatchAudit() {
                             is_syntax_valid: item.checks?.syntax?.passed ?? item.syntax_valid,
                             is_domain_resolved: item.checks?.dns?.passed ?? item.dns_resolved,
                             is_mx_found: item.checks?.mx?.passed ?? item.mx_found,
-                            is_disposable: !(item.checks?.disposable?.passed) ?? item.disposable_detected,
-                            is_role_based: !(item.checks?.role_based?.passed) ?? item.role_account_detected,
+                            is_disposable: item.checks?.disposable ? !item.checks.disposable.passed : (item.disposable_detected ?? false),
+                            is_role_based: item.checks?.role_based ? !item.checks.role_based.passed : (item.role_account_detected ?? false),
                           });
                           setDrawerOpen(true);
                         }}

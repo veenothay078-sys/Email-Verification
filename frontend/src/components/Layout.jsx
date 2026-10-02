@@ -116,12 +116,14 @@ export default function Layout({ currentTab, onTabChange, children }) {
           <div className="p-4 border-t border-slate-100 bg-slate-50/60 space-y-3">
             <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs">
-                <span className={`w-2 h-2 rounded-full ${apiStatus === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                <span className={`w-2 h-2 rounded-full ${apiStatus === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500 animate-ping'}`} />
                 <span className="text-slate-700 font-bold text-[11px]">
-                  {apiStatus === 'online' ? 'API Online' : 'Connecting...'}
+                  {apiStatus === 'online' ? 'Backend Online' : 'Connecting...'}
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400 font-mono">127.0.0.1</span>
+              <span className="text-[10px] text-emerald-700 font-mono font-semibold">
+                {apiStatus === 'online' ? 'Cloud Connected' : 'Checking'}
+              </span>
             </div>
 
             <div className="text-[10px] text-slate-500 space-y-0.5 px-1">
