@@ -74,7 +74,7 @@ export default function SingleVerify() {
     if (statusUpper.includes('INVALID') || statusUpper.includes('NOT REAL')) {
       return <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-full badge-invalid"><span className="w-2 h-2 rounded-full bg-red-600"></span>NOT REAL / INVALID</span>;
     }
-    return <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-full badge-unknown"><span className="w-2 h-2 rounded-full bg-slate-500"></span>UNKNOWN</span>;
+    return <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-full badge-unknown"><span className="w-2 h-2 rounded-full bg-slate-500"></span>UNKNOWN (UNCONFIRMED)</span>;
   };
 
   const getStepStatusTag = (val, okValue = 'VALID') => {

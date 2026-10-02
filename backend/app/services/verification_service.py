@@ -351,43 +351,47 @@ class VerificationEngine:
                 "CONFIRMED_EXISTS", "MAILBOX_VERIFICATION_SUPPORTED", "CONFIRMED"
             )
 
-        # 10. Verified Major Mail Providers (Gmail, Yahoo, Outlook, etc.) with Active MX
-        free_mail = signals.get("free_mail", {})
-        if free_mail.get("is_free_provider") and mx["passed"] and not disposable["is_disposable"] and not role_based["is_role_based"]:
-            mx_count = len(mx.get("mx_records", []))
-            primary_host = mx.get("primary_host") or "mail server"
-            return (
-                "VALID", "REAL / VALID", 95, "HIGH",
-                f"Domain mail exchange infrastructure is verified active ({mx_count} MX record{'s' if mx_count != 1 else ''}, Primary: {primary_host}). Provider protects direct Port 25 recipient querying.",
-                f"Email address is valid and hosted on active, verified {dom_name} mail servers.",
-                "VALID", "VALID", "FOUND", "CONNECTED", "ACCEPTED",
-                "CONFIRMED_EXISTS", "MAILBOX_VERIFICATION_SUPPORTED", "CONFIRMED"
-            )
-
-        # 11. SMTP Restriction / Greylisting / Timeout / Inconclusive (UNKNOWN)
+        # 10. SMTP Restriction / Greylisting / Timeout / Inconclusive (UNKNOWN)
         smtp_status = smtp.get("smtp_status", "UNKNOWN")
         smtp_conn_str = "CONNECTED" if smtp.get("connected") else ("TIMEOUT" if smtp_status == "TIMEOUT" else "BLOCKED")
         server_msg = smtp.get("server_message") or ""
+        free_mail = signals.get("free_mail", {})
 
-        if smtp_status == "GREYLISTED":
+        if free_mail.get("is_free_provider"):
+            mx_count = len(mx.get("mx_records", []))
+            primary_host = mx.get("primary_host") or "mail server"
+            reason = f"Domain mail infrastructure is active ({mx_count} MX records, Primary: {primary_host}). However, {dom_name} protects against automated recipient scraping, so the existence of this specific mailbox cannot be confirmed without sending an email."
+            msg = f"Infrastructure is active and deliverable, but {dom_name} restricts non-contact mailbox existence probing."
+            score = 75
+            evidence = "NO_EVIDENCE"
+            capability = "MAILBOX_VERIFICATION_RESTRICTED"
+        elif smtp_status == "GREYLISTED":
             reason = f"Destination mail server returned temporary greylisting/rate-limit response: {server_msg}"
             msg = "Mail server responded with a temporary 4xx code. Try again later."
+            score = 60
             evidence = "AMBIGUOUS"
+            capability = "TEMPORARY_GREYLISTING"
         elif smtp_status == "TIMEOUT":
             reason = f"Outbound SMTP connection timed out: {server_msg}"
             msg = "Connection to mail server timed out on Port 25. Mailbox existence is unconfirmed."
+            score = 50
             evidence = "TIMEOUT"
+            capability = "MAILBOX_VERIFICATION_RESTRICTED"
         elif smtp_status == "BLOCKED":
-            reason = f"Outbound SMTP connection error or network restriction: {server_msg}"
-            msg = "Port 25 outbound network connection was blocked or restricted."
+            reason = f"Outbound SMTP connection restricted: {server_msg}"
+            msg = "Port 25 outbound network connection was blocked or restricted by hosting provider."
+            score = 50
             evidence = "PROVIDER_BLOCKED"
+            capability = "MAILBOX_VERIFICATION_RESTRICTED"
         else:
             reason = f"Ambiguous SMTP response: {server_msg}" if server_msg else "Receiving mail server did not disclose recipient mailbox status."
             msg = "The receiving mail server did not provide explicit mailbox confirmation."
+            score = 50
             evidence = "NO_EVIDENCE"
+            capability = "MAILBOX_VERIFICATION_AMBIGUOUS"
 
         return (
-            "UNKNOWN", "UNKNOWN", 50, "LOW",
+            "UNKNOWN", "UNKNOWN", score, "MEDIUM",
             reason, msg,
             "VALID", "VALID", "FOUND", smtp_conn_str, "UNCONFIRMED",
             evidence, capability, "NOT CONFIRMED"
