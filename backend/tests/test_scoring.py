@@ -10,11 +10,22 @@ def test_score_calculation_for_invalid():
 
 def test_status_for_disposable():
     # mailinator.com is disposable
-    res = verification_service.verify_email("testuser@mailinator.com")
-    assert res.checks.disposable.passed is False
-    assert res.status == "RISKY"
-    assert res.checks.disposable.display_value == "YES"
-    assert res.notification_sent is False
+    from unittest.mock import patch
+    with patch("app.services.verification_service.dns_service.check_domain_dns") as mock_dns:
+        mock_dns.return_value = {
+            "domain": "mailinator.com",
+            "is_resolvable": True,
+            "has_mx": True,
+            "mx_records": [{"priority": 10, "host": "mail.mailinator.com"}],
+            "a_records": ["1.2.3.4"],
+            "error": None,
+            "is_timeout": False
+        }
+        res = verification_service.verify_email("testuser@mailinator.com")
+        assert res.checks.disposable.passed is False
+        assert res.status == "RISKY"
+        assert res.checks.disposable.display_value == "YES"
+        assert res.notification_sent is False
 
 def test_status_for_role_based():
     # info@gmail.com has valid domain & MX, but role-based local part
